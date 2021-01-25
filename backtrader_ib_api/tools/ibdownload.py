@@ -1,41 +1,117 @@
 import logging
-import datetime
 import pystore
-from typing import List, Dict
+from typing import List
 import pandas as pd
+from collections import namedtuple
 
 from ibapi.common import BarData, TickerId
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract
 
+from .stocks import ContractArgs, SP100_HOLDINGS
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_REQUESTS = ["trades"]
+DEFAULT_REQUESTS = ["trades", "implied_vol", "historical_vol"]
 REQUEST_NAME_TO_ID = {
     "trades": 1,
     "implied_vol": 2,
     "historical_vol": 3,
 }
 REQUEST_ID_TO_NAME = {value: key for key, value in REQUEST_NAME_TO_ID.items()}
-REQUEST_VALUES = {
+REQUEST_NAME_TO_VALUE = {
     "trades": "TRADES",
     "implied_vol": "OPTION_IMPLIED_VOLATILITY",
     "historical_vol": "HISTORICAL_VOLATILITY",
 }
+REQUEST_VALUE_TO_NAME = {value: key for key, value in REQUEST_NAME_TO_VALUE.items()}
+BAR_FIELDS = {
+    "trades": ["open", "high", "low", "close", "volume", "barCount", "average"],
+    "implied_vol": ["open", "high", "low", "close", "barCount", "average"],
+    "historical_vol": ["open", "high", "low", "close", "barCount", "average"],
+}
+
+RequestHistorical = namedtuple("RequestHistorical",
+                               ["reqId", "contract", "endDateTime", "durationStr",
+                                "barSizeSetting", "whatToShow", "useRTH", "formatDate",
+                                "keepUpToDate", "chartOptions"])
 
 
-class SnapshotWrapper(EWrapper):
-    BAR_FIELDS = ["open", "high", "low", "close", "volume", "barCount", "average"]
+class HistoricalPriceDataWrapper(EWrapper):
+    """ Wrapper that is used to collect historical price, implied volatility,
+    and historical volatility data for a list of contracts
+    """
 
-    def __init__(self, app, contract_name: str, collections: dict):
+    @staticmethod
+    def get_contract_for_ticker(ticker: str, sec_type="STK", exchange="SMART", currency="USD"):
+        """ Returns a Contract object suitable for using to request data for
+        ticker (uses localSymbol field for the ticker)
+        """
+        contract = Contract()
+        contract.secType = sec_type
+        contract.exchange = exchange
+        contract.currency = currency
+        contract.localSymbol = ticker
+        return contract
+
+    def __init__(self, store, contracts: List[ContractArgs] = None, requests: List[str] = None,
+                 duration="6 M", bar_size="30 mins", after_hours=False):
         EWrapper.__init__(self)
-        self.app = app
-        self.contract_name = contract_name
-        self.collections = collections
-        self.tables = {request: pd.DataFrame([], columns=self.BAR_FIELDS)
-                       for request in self.collections}
-        self.requests_finished = []
+        self._app = None
+
+        if not bar_size:
+            raise ValueError("Bar size must be provided, for example '30 mins'")
+        bar_size_str = bar_size.replace("mins", "m").replace(" ", "")
+
+        if not requests:
+            requests = DEFAULT_REQUESTS
+        self.collections = {request: store.collection(f"{request}-{bar_size_str}") for request in requests}
+
+        if not contracts:
+            contracts = SP100_HOLDINGS
+        contracts = [self.get_contract_for_ticker(contract.ticker, exchange=contract.exchange)
+                     for contract in contracts]
+
+        end_time = datetime.datetime.today()
+        query_time = end_time.strftime("%Y%m%d %H:%M:%S")
+        self.table = None
+        self.requests = [
+            RequestHistorical(
+                reqId=i,
+                contract=params[1],
+                endDateTime=query_time,
+                durationStr=duration,
+                barSizeSetting=bar_size,
+                whatToShow=REQUEST_NAME_TO_VALUE[params[0]],
+                useRTH=0 if after_hours else 1,
+                formatDate=1,
+                keepUpToDate=False,
+                chartOptions=[],
+            )
+            for i, params in enumerate([(request_name, contract)
+                                        for contract in contracts
+                                        for request_name in requests])
+        ]
+        self.current_request_id = 0
+
+    @property
+    def app(self):
+        if self._app is None:
+            raise ValueError("app has not been set. Assign app property before starting run loop.")
+        return self._app
+
+    @app.setter
+    def app(self, value):
+        self._app = value
+
+    def send_next_request(self):
+        """ Kicks off the next historical data request
+        """
+        request = self.requests[self.current_request_id]
+        request_name = REQUEST_VALUE_TO_NAME[request.whatToShow]
+        self.table = pd.DataFrame([], columns=BAR_FIELDS[request_name])
+        self._app.reqHistoricalData(*request)
 
     def error(self, req_id: TickerId, error_code: int, error_string: str):
         """This event is called when there is an error with the
@@ -51,7 +127,7 @@ class SnapshotWrapper(EWrapper):
 
     def connectAck(self):
         logger.info("Connection successful. Requesting historical data...")
-        self.app.send_req_historical()
+        self.send_next_request()
 
     def historicalData(self, reqId: int, bar: BarData):
         """ returns the requested historical data bars
@@ -71,67 +147,31 @@ class SnapshotWrapper(EWrapper):
 
         logger.info(f"Received bar data: {bar}")
         dt = datetime.datetime.strptime(bar.date, "%Y%m%d %H:%M:%S")
-        request_name = REQUEST_ID_TO_NAME[reqId]
-        table = self.tables[request_name]
-        table.loc[dt] = [getattr(bar, field) for field in self.BAR_FIELDS]
+        request = self.requests[reqId]
+        request_name = REQUEST_VALUE_TO_NAME[request.whatToShow]
+        self.table.loc[dt] = [getattr(bar, field) for field in BAR_FIELDS[request_name]]
 
     def historicalDataEnd(self, reqId:int, start:str, end:str):
         """ Marks the ending of the historical bars reception. """
         super().historicalDataEnd(reqId, start, end)
-        req_name = REQUEST_ID_TO_NAME[reqId]
-        logger.info(f"Bar data finished: {req_name}, writing to collection")
+        request = self.requests[reqId]
+        request_name = REQUEST_VALUE_TO_NAME[request.whatToShow]
+        contract_name = request.contract.localSymbol
+        logger.info(f"'{request_name}' data finished for ticker '{contract_name}', writing to collection")
         # if table already exists, pull it in and we will update
         # otherwise create a fresh table
         try:
             # pystore should automatically drop any duplicates, updating the data with latest if there are any
-            self.collections[req_name].append(self.contract_name, self.tables[req_name])
+            self.collections[request_name].append(contract_name, self.table)
         except ValueError:
-            self.collections[req_name].write(self.contract_name, self.tables[req_name])
-        self.requests_finished.append(req_name)
-        if all([request in self.requests_finished for request in self.collections]):
+            self.collections[request_name].write(contract_name, self.table)
+        self.current_request_id += 1
+        if len(self.requests) == self.current_request_id:
             # if all the requests are done, shut down the app
             # self.app.disconnect()
             print("All requests are complete. You can shut down the app now.")
-
-
-class SnapshotApp(EClient):
-    def __init__(self, contract: Contract, store: pystore.store, requests: List[str] = None,
-                 duration="6 M", bar_size="30 mins", after_hours=False):
-
-        if not bar_size:
-            raise ValueError("Bar size must be provided, for example '30 mins'")
-        bar_size_str = bar_size.replace("mins", "m").replace(" ", "")
-
-        end_time = datetime.datetime.today()
-        query_time = end_time.strftime("%Y%m%d %H:%M:%S")
-
-        if not requests:
-            requests = DEFAULT_REQUESTS
-        self.collections = {request: store.collection(f"{request}-{bar_size_str}") for request in requests}
-
-        if not contract.localSymbol:
-            raise ValueError("Contract.localSymbol must be provided, for example 'SPY'")
-        wrapper = SnapshotWrapper(self, contract.localSymbol, self.collections)
-        EClient.__init__(self, wrapper=wrapper)
-        self.requests = [
-            (
-                REQUEST_NAME_TO_ID[request_name],
-                contract,
-                query_time,
-                duration,
-                bar_size,
-                REQUEST_VALUES[request_name],
-                0 if after_hours else 1,
-                1,
-                False,  # keep up to date
-                []
-            )
-            for request_name in requests
-        ]
-
-    def send_req_historical(self):
-        for request in self.requests:
-            self.reqHistoricalData(*request)
+        else:
+            self.send_next_request()
 
 
 if __name__ == "__main__":
@@ -146,11 +186,7 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=7496, type=int)
     parser.add_argument("--clientid", default=0, type=int)
-    parser.add_argument("--exchange", default="SMART", help="Exchange to use for contract lookup, default is SMART")
-    parser.add_argument("--sec-type", default="STK", help="Security type to look up, default is STK (stock)")
-    parser.add_argument("--currency", default="USD", help="Currency to use for quotes, default is USD (US Dollar)")
     parser.add_argument("--storage-path", default='C:/stores', help="Path to store downloaded data")
-    parser.add_argument("ticker", help="Ticker to look up")
 
     args = parser.parse_args()
 
@@ -163,12 +199,8 @@ if __name__ == "__main__":
     pystore.set_path(args.storage_path)
     store = pystore.store("ib")
 
-    contract = Contract()
-    contract.secType = args.sec_type
-    contract.exchange = args.exchange
-    contract.currency = args.currency
-    contract.localSymbol = args.ticker
-
-    app = SnapshotApp(contract, store)
+    wrapper = HistoricalPriceDataWrapper(store)
+    app = EClient(wrapper=wrapper)
+    wrapper.app = app
     app.connect(args.host, args.port, args.clientid)
     app.run()
