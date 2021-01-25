@@ -1,6 +1,25 @@
-from collections import namedtuple
+from ibapi.contract import Contract
 
-ContractArgs = namedtuple("ContractArgs", ["ticker", "name", "exchange"], defaults=["SMART"])
+
+class ContractArgs:
+    """ Helper class for creating a contract with a one-line initializer
+    """
+    def __init__(self, ticker: str, name: str, exchange: str = "SMART", currency: str = "USD"):
+        self._contract = Contract()
+        self._contract.secType = ticker
+        self._contract.exchange = exchange
+        self._contract.currency = currency
+        self._contract.localSymbol = ticker
+        self._name = name
+
+    @property
+    def contract(self):
+        return self._contract
+
+    @property
+    def name(self):
+        return self._name
+
 
 SP100_HOLDINGS = [
     ContractArgs(ticker="AAPL", name="Apple Inc."),

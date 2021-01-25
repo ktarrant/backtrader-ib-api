@@ -7,7 +7,6 @@ from collections import namedtuple
 from ibapi.common import BarData, TickerId
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
-from ibapi.contract import Contract
 
 from .stocks import ContractArgs, SP100_HOLDINGS
 
@@ -43,18 +42,6 @@ class EquityPriceDataWrapper(EWrapper):
     and historical volatility data for a list of contracts
     """
 
-    @staticmethod
-    def get_contract_for_ticker(ticker: str, sec_type="STK", exchange="SMART", currency="USD"):
-        """ Returns a Contract object suitable for using to request data for
-        ticker (uses localSymbol field for the ticker)
-        """
-        contract = Contract()
-        contract.secType = sec_type
-        contract.exchange = exchange
-        contract.currency = currency
-        contract.localSymbol = ticker
-        return contract
-
     def __init__(self, store, contracts: List[ContractArgs] = None, requests: List[str] = None,
                  duration="6 M", bar_size="30 mins", after_hours=False):
         EWrapper.__init__(self)
@@ -70,8 +57,7 @@ class EquityPriceDataWrapper(EWrapper):
 
         if not contracts:
             contracts = SP100_HOLDINGS
-        contracts = [self.get_contract_for_ticker(contract.ticker, exchange=contract.exchange)
-                     for contract in contracts]
+        contracts = [contract.contract for contract in contracts]
 
         end_time = datetime.datetime.today()
         query_time = end_time.strftime("%Y%m%d %H:%M:%S")
