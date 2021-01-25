@@ -38,7 +38,7 @@ RequestHistorical = namedtuple("RequestHistorical",
                                 "keepUpToDate", "chartOptions"])
 
 
-class HistoricalPriceDataWrapper(EWrapper):
+class EquityPriceDataWrapper(EWrapper):
     """ Wrapper that is used to collect historical price, implied volatility,
     and historical volatility data for a list of contracts
     """
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     import datetime
 
     parser = argparse.ArgumentParser(description="""
-    Collecting futures historical data
+    Collecting equity price historical data
     """)
 
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -199,7 +199,7 @@ if __name__ == "__main__":
     pystore.set_path(args.storage_path)
     store = pystore.store("ib")
 
-    wrapper = HistoricalPriceDataWrapper(store)
+    wrapper = EquityPriceDataWrapper(store)
     app = EClient(wrapper=wrapper)
     wrapper.app = app
     app.connect(args.host, args.port, args.clientid)
