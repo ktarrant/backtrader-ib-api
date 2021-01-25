@@ -21,7 +21,7 @@ SP100_HOLDINGS = [
     ContractArgs(ticker="BKNG", name="Booking Holdings"),
     ContractArgs(ticker="BLK", name="BlackRock Inc"),
     ContractArgs(ticker="BMY", name="Bristol-Myers Squibb"),
-    ContractArgs(ticker="BRKB", name="Berkshire Hathaway"),
+    ContractArgs(ticker="BRK B", name="Berkshire Hathaway"),
     ContractArgs(ticker="C", name="Citigroup Inc"),
     ContractArgs(ticker="CAT", name="Caterpillar Inc."),
     ContractArgs(ticker="CHTR", name="Charter Communications"),
