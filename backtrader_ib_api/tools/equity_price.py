@@ -39,7 +39,7 @@ RequestHistorical = namedtuple("RequestHistorical",
 
 class EquityPriceDataWrapper(EWrapper):
     """ Wrapper that is used to collect historical price, implied volatility,
-    and historical volatility data for a list of contracts
+    and historical  data for a list of contracts
     """
 
     def __init__(self, store, contracts: List[ContractArgs] = None, requests: List[str] = None,
