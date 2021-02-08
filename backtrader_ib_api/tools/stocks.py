@@ -6,7 +6,7 @@ class ContractArgs:
     """
     def __init__(self, ticker: str, name: str, exchange: str = "SMART", currency: str = "USD"):
         self._contract = Contract()
-        self._contract.secType = ticker
+        self._contract.secType = "STK"
         self._contract.exchange = exchange
         self._contract.currency = currency
         self._contract.localSymbol = ticker
