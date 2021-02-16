@@ -19,7 +19,7 @@ class RequestWrapper(EWrapper):
 
     REQUEST_ID_STOCK_DETAILS = 1
     REQUEST_ID_SEC_DEF_OPT_PARAMS = 2
-    REQUEST_OPTION_CHAIN = 3
+    REQUEST_OPTION_DETAILS = 3
 
     FIELDS_STOCK_DETAILS = [
         # from Contract
@@ -30,6 +30,11 @@ class RequestWrapper(EWrapper):
 
     FIELDS_OPTION_PARAMS = [
         "exchange", "multiplier", "expirations", "strikes",
+    ]
+
+    FIELDS_OPTION_DETAILS = [
+        # from Contract
+        "contract_id", "option_ticker", "exchange", "expiration", "strike", "right", "multiplier",
     ]
 
     FIELDS_HISTORICAL = {
@@ -91,15 +96,17 @@ class RequestWrapper(EWrapper):
                                      contract_id)
         return self._get_response_table()
 
-    # def request_option_chain(self, ticker: str, exchange: str, expiration=datetime.date, currency="USD"):
-    #     contract = Contract()
-    #     contract.secType = "OPT"
-    #     contract.symbol = ticker
-    #     contract.exchange = exchange
-    #     contract.currency = currency
-    #     self.current_request_id = self.REQUEST_OPTION_CHAIN
-    #     self._app.reqContractDetails(self.current_request_id, contract)
-    #     return self._get_response_table()
+    def request_option_chain(self, ticker: str, exchange: str, expiration: str, currency="USD"):
+        contract = Contract()
+        contract.secType = "OPT"
+        contract.symbol = ticker
+        contract.exchange = exchange
+        contract.currency = currency
+        contract.lastTradeDateOrContractMonth = expiration
+        self.current_request_id = self.REQUEST_OPTION_DETAILS
+        self.response_table = pd.DataFrame(columns=self.FIELDS_OPTION_DETAILS)
+        self._app.reqContractDetails(self.current_request_id, contract)
+        return self._get_response_table()
 
     def error(self, req_id: TickerId, error_code: int, error_string: str):
         """This event is called when there is an error with the
@@ -137,6 +144,16 @@ class RequestWrapper(EWrapper):
                 contract_details.liquidHours,
             ]
 
+        elif request_id == self.REQUEST_OPTION_DETAILS:
+            self.response_table.loc[len(self.response_table.index)] = [
+                contract_details.contract.conId,
+                contract_details.contract.localSymbol,
+                contract_details.contract.exchange,
+                contract_details.contract.lastTradeDateOrContractMonth,
+                contract_details.contract.strike,
+                contract_details.contract.right,
+                contract_details.contract.multiplier,
+            ]
         else:
             logger.error(f"Ignoring unexpected contractDetails call from request id {request_id}")
             return
