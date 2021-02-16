@@ -11,24 +11,6 @@ from ibapi.contract import ContractDetails, Contract
 
 logger = logging.getLogger(__name__)
 
-RequestContractDetails = namedtuple("RequestContractDetails",
-                                    ["ticker", "sec_type", "exchange", "currency"],
-                                    defaults=["USD", "SMART", "STK"])
-ResponseContractDetails = namedtuple("ResponseContractDetails", ["contract_details"])
-
-RequestOptionDetails = namedtuple("RequestOptionDetails", ["contract"])
-ResponseOptionDetails = namedtuple("ResponseOptionDetails", ["exchange", "stock_con_id",
-                                                             "trading_class", "multiplier",
-                                                             "expirations", "strikes"])
-
-RequestHistorical = namedtuple("RequestHistorical",
-                               ["contract", "endDateTime", "durationStr",
-                                "barSizeSetting", "whatToShow", "useRTH", "formatDate",
-                                "keepUpToDate", "chartOptions"],
-                               defaults=[[], False, 1, 0, "TRADES", "30 min", "5 d"]
-                               )
-ResponseHistorical = namedtuple("ResponseHistorical", ["bar"])
-
 
 class RequestWrapper(EWrapper):
     """ Wrapper that turns the callback-based IB API Wrapper into a blocking API, by collecting results into tables
@@ -44,6 +26,10 @@ class RequestWrapper(EWrapper):
         "contract_id", "ticker", "exchange",
         # from ContractDetails
         "long_name", "industry", "category", "sub_category", "time_zone_id", "trading_hours", "liquid_hours"
+    ]
+
+    FIELDS_OPTION_PARAMS = [
+        "exchange", "multiplier", "expirations", "strikes",
     ]
 
     FIELDS_HISTORICAL = {
@@ -95,24 +81,25 @@ class RequestWrapper(EWrapper):
         self._app.reqContractDetails(self.current_request_id, contract)
         return self._get_response_table()
 
-    def request_option_params(self, contract: Contract):
+    def request_option_params(self, ticker: str, contract_id: int):
         self.current_request_id = self.REQUEST_ID_SEC_DEF_OPT_PARAMS
+        self.response_table = pd.DataFrame(columns=self.FIELDS_OPTION_PARAMS)
         self._app.reqSecDefOptParams(self.current_request_id,
-                                     contract.localSymbol,
+                                     ticker,
                                      "",  # Leave blank so it will return all exchange options
-                                     contract.secType,
-                                     contract.conId)
+                                     "STK",
+                                     contract_id)
         return self._get_response_table()
 
-    def request_option_chain(self, ticker: str, exchange: str, expiration=datetime.date, currency="USD"):
-        contract = Contract()
-        contract.secType = "OPT"
-        contract.symbol = ticker
-        contract.exchange = exchange
-        contract.currency = currency
-        self.current_request_id = self.REQUEST_OPTION_CHAIN
-        self._app.reqContractDetails(self.current_request_id, contract)
-        return self._get_response_table()
+    # def request_option_chain(self, ticker: str, exchange: str, expiration=datetime.date, currency="USD"):
+    #     contract = Contract()
+    #     contract.secType = "OPT"
+    #     contract.symbol = ticker
+    #     contract.exchange = exchange
+    #     contract.currency = currency
+    #     self.current_request_id = self.REQUEST_OPTION_CHAIN
+    #     self._app.reqContractDetails(self.current_request_id, contract)
+    #     return self._get_response_table()
 
     def error(self, req_id: TickerId, error_code: int, error_string: str):
         """This event is called when there is an error with the
@@ -161,20 +148,37 @@ class RequestWrapper(EWrapper):
         else:
             logger.error(f"Ignoring unexpected contractDetailsEnd call from request id {request_id}")
 
-    # def securityDefinitionOptionParameter(self, request_id: int, *args):
-    #     super().securityDefinitionOptionParameter(request_id, *args)
-    #     if not self._is_response_valid(request_id, RequestOptionDetails):
-    #         logger.error(f"Ignoring unexpected contractDetails call from request id {request_id}")
-    #         return
-    #     self.response_table += [ResponseOptionDetails(*args)]
-    #
-    # def securityDefinitionOptionParameterEnd(self, request_id: int):
-    #     """ Called when all callbacks to securityDefinitionOptionParameter are
-    #     complete
-    #
-    #     reqId - the ID used in the call to securityDefinitionOptionParameter """
-    #     super().securityDefinitionOptionParameterEnd(request_id)
-    #     self._handle_task_finished(request_id)
+    def securityDefinitionOptionParameter(self, request_id: int, exchange:str,
+                                          underlyingConId:int, tradingClass:str, multiplier:str,
+                                          expirations, strikes):
+        super().securityDefinitionOptionParameter(request_id, exchange, underlyingConId, tradingClass,
+                                                  multiplier, expirations, strikes)
+        if request_id != self.current_request_id:
+            logger.error(f"Ignoring unexpected securityDefinitionOptionParameter call from request id {request_id}")
+            return
+
+        if request_id == self.REQUEST_ID_SEC_DEF_OPT_PARAMS:
+            self.response_table.loc[len(self.response_table.index)] = [
+                exchange,
+                multiplier,
+                expirations,
+                strikes,
+            ]
+
+        else:
+            logger.error(f"Ignoring unexpected securityDefinitionOptionParameter call from request id {request_id}")
+            return
+
+    def securityDefinitionOptionParameterEnd(self, request_id: int):
+        """ Called when all callbacks to securityDefinitionOptionParameter are
+        complete
+
+        reqId - the ID used in the call to securityDefinitionOptionParameter """
+        super().securityDefinitionOptionParameterEnd(request_id)
+        if self.current_request_id == request_id and request_id == self.REQUEST_ID_SEC_DEF_OPT_PARAMS:
+            self.response_ready.set()
+        else:
+            logger.error(f"Ignoring unexpected securityDefinitionOptionParameterEnd call from request id {request_id}")
     #
     # def historicalData(self, request_id: int, bar: BarData):
     #     """ returns the requested historical data bars
