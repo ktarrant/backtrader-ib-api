@@ -21,6 +21,7 @@ class RequestWrapper(EWrapper):
     REQUEST_ID_SEC_DEF_OPT_PARAMS = 2
     REQUEST_ID_OPTION_DETAILS = 3
     REQUEST_ID_STOCK_TRADES_HISTORY = 4
+    REQUEST_ID_OPTION_TRADES_HISTORY = 5
     # REQUEST_ID_HISTORICAL_IV = 5
     # REQUEST_ID_HISTORICAL_HV = 6
 
@@ -137,6 +138,23 @@ class RequestWrapper(EWrapper):
                                         self.FIELDS_HISTORICAL_TRADES,
                                         **kwargs)
 
+    def request_option_trades_history(self, ticker: str, expiration: str, strike: float, right="C",
+                                      exchange="SMART", currency="USD", **kwargs):
+        if right not in ["C", "P"]:
+            raise ValueError(f"Invalid right: {right}")
+        contract = Contract()
+        contract.secType = "OPT"
+        contract.symbol = ticker
+        contract.exchange = exchange
+        contract.currency = currency
+        contract.lastTradeDateOrContractMonth = expiration
+        contract.strike = strike
+        contract.right = right
+        return self._request_historical(self.REQUEST_ID_OPTION_TRADES_HISTORY,
+                                        contract,
+                                        self.FIELDS_HISTORICAL_TRADES,
+                                        **kwargs)
+
     def error(self, req_id: TickerId, error_code: int, error_string: str):
         """This event is called when there is an error with the
         communication or when TWS wants to send a message to the client."""
@@ -246,7 +264,7 @@ class RequestWrapper(EWrapper):
             logger.error(f"Ignoring unexpected historicalData call from request id {request_id}")
             return
 
-        if request_id == self.REQUEST_ID_STOCK_TRADES_HISTORY:
+        if request_id in [self.REQUEST_ID_STOCK_TRADES_HISTORY, self.REQUEST_ID_OPTION_TRADES_HISTORY]:
             dt = datetime.strptime(bar.date, "%Y%m%d %H:%M:%S")
             self.response_table.loc[dt] = [
                 bar.open, bar.high, bar.low, bar.close, bar.volume, bar.barCount, bar.average
@@ -264,7 +282,9 @@ class RequestWrapper(EWrapper):
     def historicalDataEnd(self, request_id:int, start: str, end: str):
         """ Marks the ending of the historical bars reception. """
         super().historicalDataEnd(request_id, start, end)
-        if self.current_request_id == request_id and request_id == self.REQUEST_ID_STOCK_TRADES_HISTORY:
+        if self.current_request_id == request_id and request_id in [
+                self.REQUEST_ID_STOCK_TRADES_HISTORY, self.REQUEST_ID_OPTION_TRADES_HISTORY]:
+
             self.response_ready.set()
         else:
             logger.error(f"Ignoring unexpected securityDefinitionOptionParameterEnd call from request id {request_id}")
