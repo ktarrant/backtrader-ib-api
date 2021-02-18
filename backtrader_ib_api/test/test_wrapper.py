@@ -19,3 +19,8 @@ def test_option_chain(wrapper: RequestWrapper):
 
     option_chain = wrapper.request_option_chain("AAPL", option_contract.exchange, front_expiration)
     print(option_chain)
+
+
+def test_stock_historical_trades(wrapper: RequestWrapper):
+    history = wrapper.request_stock_trades_history("AAPL")
+    print(history)

@@ -19,7 +19,10 @@ class RequestWrapper(EWrapper):
 
     REQUEST_ID_STOCK_DETAILS = 1
     REQUEST_ID_SEC_DEF_OPT_PARAMS = 2
-    REQUEST_OPTION_DETAILS = 3
+    REQUEST_ID_OPTION_DETAILS = 3
+    REQUEST_ID_STOCK_TRADES_HISTORY = 4
+    # REQUEST_ID_HISTORICAL_IV = 5
+    # REQUEST_ID_HISTORICAL_HV = 6
 
     FIELDS_STOCK_DETAILS = [
         # from Contract
@@ -37,11 +40,8 @@ class RequestWrapper(EWrapper):
         "contract_id", "option_ticker", "exchange", "expiration", "strike", "right", "multiplier",
     ]
 
-    FIELDS_HISTORICAL = {
-        "trades": ["open", "high", "low", "close", "volume", "barCount", "average"],
-        "implied_vol": ["open", "high", "low", "close", "barCount", "average"],
-        "historical_vol": ["open", "high", "low", "close", "barCount", "average"],
-    }
+    FIELDS_HISTORICAL_TRADES = ["open", "high", "low", "close", "volume", "count", "average"]
+    # FIELDS_HISTORICAL_VOL = ["open", "high", "low", "close", "count", "average"]
 
     def __init__(self, timeout=10.0):
         EWrapper.__init__(self)
@@ -103,10 +103,39 @@ class RequestWrapper(EWrapper):
         contract.exchange = exchange
         contract.currency = currency
         contract.lastTradeDateOrContractMonth = expiration
-        self.current_request_id = self.REQUEST_OPTION_DETAILS
+        self.current_request_id = self.REQUEST_ID_OPTION_DETAILS
         self.response_table = pd.DataFrame(columns=self.FIELDS_OPTION_DETAILS)
         self._app.reqContractDetails(self.current_request_id, contract)
         return self._get_response_table()
+
+    def _request_historical(self, request_id: int, contract: Contract, columns: list,
+                            data_type="TRADES", duration="5 d", bar_size="30 mins", after_hours=False):
+        end_time = datetime.today()
+        query_time = end_time.strftime("%Y%m%d %H:%M:%S")
+        self.current_request_id = request_id
+        self.response_table = pd.DataFrame(columns=columns)
+        self._app.reqHistoricalData(reqId=self.current_request_id,
+                                    contract=contract,
+                                    endDateTime=query_time,
+                                    durationStr=duration,
+                                    barSizeSetting=bar_size,
+                                    whatToShow=data_type,
+                                    useRTH=0 if after_hours else 1,
+                                    formatDate=1,
+                                    keepUpToDate=False,
+                                    chartOptions=[])
+        return self._get_response_table()
+
+    def request_stock_trades_history(self, ticker: str, exchange="SMART", currency="USD", **kwargs):
+        contract = Contract()
+        contract.secType = "STK"
+        contract.localSymbol = ticker
+        contract.exchange = exchange
+        contract.currency = currency
+        return self._request_historical(self.REQUEST_ID_STOCK_TRADES_HISTORY,
+                                        contract,
+                                        self.FIELDS_HISTORICAL_TRADES,
+                                        **kwargs)
 
     def error(self, req_id: TickerId, error_code: int, error_string: str):
         """This event is called when there is an error with the
@@ -144,7 +173,7 @@ class RequestWrapper(EWrapper):
                 contract_details.liquidHours,
             ]
 
-        elif request_id == self.REQUEST_OPTION_DETAILS:
+        elif request_id == self.REQUEST_ID_OPTION_DETAILS:
             self.response_table.loc[len(self.response_table.index)] = [
                 contract_details.contract.conId,
                 contract_details.contract.localSymbol,
@@ -196,29 +225,46 @@ class RequestWrapper(EWrapper):
             self.response_ready.set()
         else:
             logger.error(f"Ignoring unexpected securityDefinitionOptionParameterEnd call from request id {request_id}")
-    #
-    # def historicalData(self, request_id: int, bar: BarData):
-    #     """ returns the requested historical data bars
-    #
-    #     request_id - the request's identifier
-    #     date  - the bar's date and time (either as a yyyymmdd hh:mm:ss formatted
-    #          string or as system time according to the request)
-    #     open  - the bar's open point
-    #     high  - the bar's high point
-    #     low   - the bar's low point
-    #     close - the bar's closing point
-    #     volume - the bar's traded volume if available
-    #     barCount - the number of trades during the bar's timespan (only available
-    #         for TRADES).
-    #     average -   the bar's Weighted Average Price
-    #     """
-    #     super().historicalData(request_id, bar)
-    #     if not self._is_response_valid(request_id, RequestHistorical):
-    #         logger.error(f"Ignoring unexpected historicalData call from request id {request_id}")
-    #         return
-    #     self.response_table += [ResponseHistorical(bar=bar)]
-    #
-    # def historicalDataEnd(self, request_id:int, start: str, end: str):
-    #     """ Marks the ending of the historical bars reception. """
-    #     super().historicalDataEnd(request_id, start, end)
-    #     self._handle_task_finished(request_id)
+
+    def historicalData(self, request_id: int, bar: BarData):
+        """ returns the requested historical data bars
+
+        request_id - the request's identifier
+        date  - the bar's date and time (either as a yyyymmdd hh:mm:ss formatted
+             string or as system time according to the request)
+        open  - the bar's open point
+        high  - the bar's high point
+        low   - the bar's low point
+        close - the bar's closing point
+        volume - the bar's traded volume if available
+        barCount - the number of trades during the bar's timespan (only available
+            for TRADES).
+        average -   the bar's Weighted Average Price
+        """
+        super().historicalData(request_id, bar)
+        if request_id != self.current_request_id:
+            logger.error(f"Ignoring unexpected historicalData call from request id {request_id}")
+            return
+
+        if request_id == self.REQUEST_ID_STOCK_TRADES_HISTORY:
+            dt = datetime.strptime(bar.date, "%Y%m%d %H:%M:%S")
+            self.response_table.loc[dt] = [
+                bar.open, bar.high, bar.low, bar.close, bar.volume, bar.barCount, bar.average
+            ]
+
+        # if request_id == self.REQUEST_ID_HISTORICAL_IV or request_id == self.REQUEST_ID_HISTORICAL_HV:
+        #     self.response_table.loc[len(self.response_table.index)] = [
+        #         bar.open, bar.high, bar.low, bar.close, bar.barCount, bar.average
+        #     ]
+
+        else:
+            logger.error(f"Ignoring unexpected securityDefinitionOptionParameter call from request id {request_id}")
+            return
+
+    def historicalDataEnd(self, request_id:int, start: str, end: str):
+        """ Marks the ending of the historical bars reception. """
+        super().historicalDataEnd(request_id, start, end)
+        if self.current_request_id == request_id and request_id == self.REQUEST_ID_STOCK_TRADES_HISTORY:
+            self.response_ready.set()
+        else:
+            logger.error(f"Ignoring unexpected securityDefinitionOptionParameterEnd call from request id {request_id}")
