@@ -251,12 +251,13 @@ class RequestWrapper(EWrapper):
         communication or when TWS wants to send a message to the client."""
         logger.error(f"{error_string} (req_id:{req_id}, error_code:{error_code})")
 
-        # if 2000 <= error_code < 10000:
-        #     return False
-        # elif error_code == 10167: # delayed market data instead
-        #     return False
-        # else:
-        #     return True
+        if 2000 <= error_code < 10000:  # non-fatal
+            pass
+        elif error_code == 10167:  # delayed market data instead
+            pass
+        else:
+            logger.error("Ending response since error code is fatal")
+            self.response_ready.set()
 
     def connectAck(self):
         logger.info("Connection successful.")
