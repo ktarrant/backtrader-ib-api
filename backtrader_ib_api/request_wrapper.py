@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
-from threading import Event, Thread, Lock
+from threading import Thread
+from queue import Queue
 import pandas as pd
 
 from ibapi.common import BarData, TickerId
@@ -126,26 +127,24 @@ class RequestWrapper(EWrapper):
 
     def __init__(self, timeout=10.0):
         EWrapper.__init__(self)
+        self.response_queue = Queue()
         self.timeout = timeout
         self._app = None
         self.current_request_id = 0
         self.current_request = None
         self.response_table = None
-        self.response_ready = Event()
         self.thread = None
 
     def start_app(self, host, port, client_id):
         self._app = EClient(wrapper=self)
         self.current_request_id = 0
         self.current_request = "INIT"
-        self.request_lock = Lock()
         self.response_table = None
-        self.response_ready.clear()
         self._app.connect(host, port, client_id)
         self.thread = Thread(target=self._app.run, daemon=True)
         self.thread.start()
-        self.response_ready.wait(timeout=self.timeout)
-        self.response_ready.clear()
+        # connectAck will add a None to the queue during INIT
+        self.response_queue.get(timeout=self.timeout)
 
     def stop_app(self):
         self._app.disconnect()
@@ -160,11 +159,6 @@ class RequestWrapper(EWrapper):
         self.current_request = request_name
         self.response_table = pd.DataFrame(columns=self.REQUEST_FIELDS[request_name])
 
-    def _get_response_table(self):
-        self.response_ready.wait(timeout=self.timeout)
-        self.response_ready.clear()
-        return self.response_table
-
     def request_stock_details(self, ticker: str, exchange="SMART", currency="USD"):
         self._start_request("STOCK_DETAILS")
         contract = Contract()
@@ -173,7 +167,7 @@ class RequestWrapper(EWrapper):
         contract.exchange = exchange
         contract.currency = currency
         self._app.reqContractDetails(self.current_request_id, contract)
-        return self._get_response_table()
+        return self.response_queue.get()
 
     def request_option_params(self, ticker: str, contract_id: int):
         self._start_request("OPTION_PARAMS")
@@ -182,7 +176,7 @@ class RequestWrapper(EWrapper):
                                      "",  # Leave blank so it will return all exchange options
                                      "STK",
                                      contract_id)
-        return self._get_response_table()
+        return self.response_queue.get()
 
     def request_option_chain(self, ticker: str, exchange: str, expiration: str, currency="USD"):
         self._start_request("OPTION_DETAILS")
@@ -193,7 +187,7 @@ class RequestWrapper(EWrapper):
         contract.currency = currency
         contract.lastTradeDateOrContractMonth = expiration
         self._app.reqContractDetails(self.current_request_id, contract)
-        return self._get_response_table()
+        return self.response_queue.get()
 
     def _request_historical(self, contract: Contract,
                             data_type="TRADES", duration="5 d", bar_size="30 mins", after_hours=False):
@@ -215,7 +209,7 @@ class RequestWrapper(EWrapper):
                                     formatDate=1,
                                     keepUpToDate=False,
                                     chartOptions=[])
-        return self._get_response_table()
+        return self.response_queue.get()
 
     def request_stock_trades_history(self, ticker: str, exchange="SMART", currency="USD", **kwargs):
         self._start_request("HISTORICAL_TRADES_EQUITY")
@@ -267,13 +261,13 @@ class RequestWrapper(EWrapper):
             pass
         else:
             logger.error("Ending response since error code is fatal")
-            self.response_ready.set()
+            self._app.disconnect()
 
     def connectAck(self):
         super().connectAck()
         logger.info("Connection successful.")
         if self.current_request == "INIT":
-            self.response_ready.set()
+            self.response_queue.put(None)
 
     def _handle_callback(self, callback_name, request_id, *args):
         if request_id != self.current_request_id:
@@ -303,8 +297,8 @@ class RequestWrapper(EWrapper):
                          f"expected callback {expected_callback_name}End")
             return
 
-        # notify that no more responses expected
-        self.response_ready.set()
+        # deliver the data table
+        self.response_queue.put(self.response_table)
 
     def contractDetails(self, request_id: int, *args):
         super().contractDetails(request_id, *args)
