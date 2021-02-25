@@ -58,8 +58,9 @@ if __name__ == "__main__":
     bar_size_str = args.bar_size.replace("mins", "m").replace(" ", "")
     duration = f"{args.history_length} d"
 
-    equity_history_collection = store.collection(f"trades-{bar_size_str}")
-    option_history_collection = store.collection(f"optiontrades-{bar_size_str}")
+    equity_trades_collection = store.collection(f"trades-{bar_size_str}")
+    # option_trades_collection = store.collection(f"option-trades-{bar_size_str}")
+    option_bidask_collection = store.collection(f"option-bidask-{bar_size_str}")
 
     tickers = [ticker.upper() for ticker in args.tickers.split(",")]
     for ticker in tickers:
@@ -71,9 +72,9 @@ if __name__ == "__main__":
         logger.debug(f"Equity history: {history}")
         try:
             # pystore should automatically drop any duplicates, updating the data with latest if there are any
-            equity_history_collection.append(ticker, history)
+            equity_trades_collection.append(ticker, history)
         except ValueError:
-            equity_history_collection.write(ticker, history)
+            equity_trades_collection.write(ticker, history)
 
         option_params = wrapper.request_option_params(ticker, stock_contract_id)
         logger.info(f"Found {len(option_params)} option param results")
@@ -91,23 +92,24 @@ if __name__ == "__main__":
 
         earnings_expiration = datetime.datetime.strftime(earnings_expiration_date, "%Y%m%d")
         option_chain = wrapper.request_option_chain(ticker, option_contract.exchange, earnings_expiration)
-        logger.info(f"Option chain for {ticker} expiration {earnings_expiration}:\n{option_chain}")
+        logger.info(f"Option chain for {ticker} {earnings_expiration} has {len(option_chain.index)} options")
+        logger.debug(f"Option chain: {option_chain}")
 
-        # for contract_id in option_chain.index:
-        #     strike = option_chain.loc[contract_id, "strike"]
-        #     right = option_chain.loc[contract_id, "right"]
-        #     history = wrapper.request_option_trades_history(ticker,
-        #                                                     earnings_expiration,
-        #                                                     strike,
-        #                                                     right,
-        #                                                     duration=duration,
-        #                                                     bar_size=args.bar_size)
-        #     item_name = f"{ticker}-{earnings_expiration}-{strike}{right}"
-        #     logger.debug(f"{item_name} history: {history}")
-        #     try:
-        #         # pystore should automatically drop any duplicates, updating the data with latest if there are any
-        #         option_history_collection.append(ticker, history)
-        #     except ValueError:
-        #         option_history_collection.write(ticker, history)
+        for contract_id in option_chain.index:
+            strike = option_chain.loc[contract_id, "strike"]
+            right = option_chain.loc[contract_id, "right"]
+            history = wrapper.request_option_bidask_history(ticker,
+                                                            earnings_expiration,
+                                                            strike,
+                                                            right,
+                                                            duration=duration,
+                                                            bar_size=args.bar_size)
+            item_name = f"{ticker}-{earnings_expiration}-{strike}{right}"
+            logger.debug(f"{item_name} history: {history}")
+            try:
+                # pystore should automatically drop any duplicates, updating the data with latest if there are any
+                option_bidask_collection.append(ticker, history)
+            except ValueError:
+                option_bidask_collection.write(ticker, history)
 
     wrapper.stop_app()

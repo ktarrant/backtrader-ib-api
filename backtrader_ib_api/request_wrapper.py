@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from threading import Event, Thread
+from threading import Event, Thread, Lock
 import pandas as pd
 
 from ibapi.common import BarData, TickerId
@@ -27,18 +27,6 @@ class RequestWrapper(EWrapper):
     """ Wrapper that turns the callback-based IB API Wrapper into a blocking API, by collecting results into tables
     and returning the complete tables.
     """
-
-    REQUEST_IDS = dict(
-        STOCK_DETAILS=1,
-        OPTION_PARAMS=2,
-        OPTION_DETAILS=3,
-        HISTORICAL_TRADES_EQUITY=4,
-        HISTORICAL_TRADES_OPTIONS=5,
-        HISTORICAL_BID_ASK_OPTIONS=6,
-        HISTORICAL_IV_EQUITY=7,
-        HISTORICAL_HV_EQUITY=8,
-    )
-    REQUEST_ID_TO_NAME = {v: k for k, v in REQUEST_IDS.items()}
 
     REQUEST_OPTIONS_HISTORICAL_TYPE = [
         "TRADES",
@@ -83,7 +71,7 @@ class RequestWrapper(EWrapper):
         ],
         HISTORICAL_TRADES_EQUITY=REQUEST_FIELDS_HISTORICAL_TRADES,
         HISTORICAL_TRADES_OPTIONS=REQUEST_FIELDS_HISTORICAL_TRADES,
-        HISTORICAL_BID_ASK_OPTIONS=["average_bid", "max_ask", "min_bid", "average_ask", "count", "average"],
+        HISTORICAL_BID_ASK_OPTIONS=["average_bid", "max_ask", "min_bid", "average_ask"],
         HISTORICAL_IV_EQUITY=REQUEST_FIELDS_HISTORICAL_DATA,
         HISTORICAL_HV_EQUITY=REQUEST_FIELDS_HISTORICAL_DATA,
     )
@@ -129,7 +117,9 @@ class RequestWrapper(EWrapper):
         ]),
         HISTORICAL_TRADES_EQUITY=historical_trades_row_function,
         HISTORICAL_TRADES_OPTIONS=historical_trades_row_function,
-        HISTORICAL_BID_ASK_OPTIONS=historical_data_row_function,
+        HISTORICAL_BID_ASK_OPTIONS=lambda bar: (datetime.strptime(bar.date, "%Y%m%d %H:%M:%S"), [
+            bar.open, bar.high, bar.low, bar.close,
+        ]),
         HISTORICAL_IV_EQUITY=historical_data_row_function,
         HISTORICAL_HV_EQUITY=historical_data_row_function,
     )
@@ -139,12 +129,16 @@ class RequestWrapper(EWrapper):
         self.timeout = timeout
         self._app = None
         self.current_request_id = 0
+        self.current_request = None
         self.response_table = None
         self.response_ready = Event()
         self.thread = None
 
     def start_app(self, host, port, client_id):
         self._app = EClient(wrapper=self)
+        self.current_request_id = 0
+        self.current_request = "INIT"
+        self.request_lock = Lock()
         self.response_table = None
         self.response_ready.clear()
         self._app.connect(host, port, client_id)
@@ -162,7 +156,8 @@ class RequestWrapper(EWrapper):
         return self._app
 
     def _start_request(self, request_name):
-        self.current_request_id = self.REQUEST_IDS[request_name]
+        self.current_request_id += 1
+        self.current_request = request_name
         self.response_table = pd.DataFrame(columns=self.REQUEST_FIELDS[request_name])
 
     def _get_response_table(self):
@@ -246,6 +241,21 @@ class RequestWrapper(EWrapper):
         contract.right = right
         return self._request_historical(contract, **kwargs)
 
+    def request_option_bidask_history(self, ticker: str, expiration: str, strike: float, right="C",
+                                      exchange="SMART", currency="USD", **kwargs):
+        self._start_request("HISTORICAL_BID_ASK_OPTIONS")
+        if right not in ["C", "P"]:
+            raise ValueError(f"Invalid right: {right}")
+        contract = Contract()
+        contract.secType = "OPT"
+        contract.symbol = ticker
+        contract.exchange = exchange
+        contract.currency = currency
+        contract.lastTradeDateOrContractMonth = expiration
+        contract.strike = strike
+        contract.right = right
+        return self._request_historical(contract, data_type="BID_ASK", **kwargs)
+
     def error(self, req_id: TickerId, error_code: int, error_string: str):
         """This event is called when there is an error with the
         communication or when TWS wants to send a message to the client."""
@@ -260,8 +270,10 @@ class RequestWrapper(EWrapper):
             self.response_ready.set()
 
     def connectAck(self):
+        super().connectAck()
         logger.info("Connection successful.")
-        self.response_ready.set()
+        if self.current_request == "INIT":
+            self.response_ready.set()
 
     def _handle_callback(self, callback_name, request_id, *args):
         if request_id != self.current_request_id:
@@ -269,18 +281,12 @@ class RequestWrapper(EWrapper):
                          f"while processing other request id {self.current_request_id}")
             return
 
-        try:
-            request_name = self.REQUEST_ID_TO_NAME[request_id]
-        except KeyError:
-            logger.error(f"Ignoring unexpected {callback_name} from invalid request_id: {request_id}")
-            return
-
-        expected_callback_name = self.REQUEST_CALLBACKS[request_name]
+        expected_callback_name = self.REQUEST_CALLBACKS[self.current_request]
         if expected_callback_name != callback_name:
             logger.error(f"Ignoring unexpected callback {callback_name}, expected callback {expected_callback_name}")
             return
 
-        index, row = self.RESPONSE_ROW_FUNCTION[request_name](*args)
+        index, row = self.RESPONSE_ROW_FUNCTION[self.current_request](*args)
         if index is None:
             index = len(self.response_table.index)
         self.response_table.loc[index] = row
@@ -291,13 +297,7 @@ class RequestWrapper(EWrapper):
                          f"while processing other request id {self.current_request_id}")
             return
 
-        try:
-            request_name = self.REQUEST_ID_TO_NAME[request_id]
-        except KeyError:
-            logger.error(f"Ignoring unexpected {callback_name}End from invalid request_id: {request_id}")
-            return
-
-        expected_callback_name = self.REQUEST_CALLBACKS[request_name]
+        expected_callback_name = self.REQUEST_CALLBACKS[self.current_request]
         if expected_callback_name != callback_name:
             logger.error(f"Ignoring unexpected callback {callback_name}End, "
                          f"expected callback {expected_callback_name}End")
