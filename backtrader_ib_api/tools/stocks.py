@@ -17,6 +17,10 @@ class ContractArgs:
         return self._contract
 
     @property
+    def ticker(self):
+        return self._contract.localSymbol
+
+    @property
     def name(self):
         return self._name
 

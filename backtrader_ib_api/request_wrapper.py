@@ -157,6 +157,7 @@ class RequestWrapper(EWrapper):
     def _start_request(self, request_name):
         self.current_request_id += 1
         self.current_request = request_name
+        self.response_queue = Queue()
         self.response_table = pd.DataFrame(columns=self.REQUEST_FIELDS[request_name])
 
     def request_stock_details(self, ticker: str, exchange="SMART", currency="USD"):
@@ -261,7 +262,7 @@ class RequestWrapper(EWrapper):
             pass
         else:
             logger.error("Ending response since error code is fatal")
-            self._app.disconnect()
+            self.response_queue.put(self.response_table)
 
     def connectAck(self):
         super().connectAck()

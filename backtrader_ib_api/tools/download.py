@@ -26,6 +26,7 @@ if __name__ == "__main__":
     import datetime
 
     from backtrader_ib_api.finviz import estimate_next_earnings_date
+    from backtrader_ib_api.tools.stocks import SP100_HOLDINGS
 
     parser = argparse.ArgumentParser(description="""
     Downloads data using the IB Trader Workstation API
@@ -37,6 +38,7 @@ if __name__ == "__main__":
     parser.add_argument("--clientid", default=0, type=int)
     parser.add_argument("--storage-path", default='C:/stores', help="Path to store downloaded data")
     parser.add_argument("--tickers", default="aapl", help="Comma-separated, case-insensitive list of tickers")
+    parser.add_argument("--sp100", action="store_true", help="Add S&P 100 holdings to the tickers list")
     parser.add_argument("--exchange", default="SMART", help="Exchange for the ticker")
     parser.add_argument("--bar-size", default="30 mins", help="Bar size")
     parser.add_argument("--history-length", default=5, help="Number of days to collect history data")
@@ -62,7 +64,9 @@ if __name__ == "__main__":
     # option_trades_collection = store.collection(f"option-trades-{bar_size_str}")
     option_bidask_collection = store.collection(f"option-bidask-{bar_size_str}")
 
-    tickers = [ticker.upper() for ticker in args.tickers.split(",")]
+    tickers = set(ticker.upper() for ticker in args.tickers.split(","))
+    tickers = tickers.union(set(contract.ticker.upper() for contract in SP100_HOLDINGS))
+
     for ticker in tickers:
         stock_details = wrapper.request_stock_details(ticker)
         logger.info(f"Using first match found for ticker {ticker}:\n{stock_details}")
@@ -108,8 +112,8 @@ if __name__ == "__main__":
             logger.debug(f"{item_name} history: {history}")
             try:
                 # pystore should automatically drop any duplicates, updating the data with latest if there are any
-                option_bidask_collection.append(ticker, history)
+                option_bidask_collection.append(item_name, history)
             except ValueError:
-                option_bidask_collection.write(ticker, history)
+                option_bidask_collection.write(item_name, history)
 
     wrapper.stop_app()
