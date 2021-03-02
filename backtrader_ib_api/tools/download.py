@@ -29,7 +29,7 @@ if __name__ == "__main__":
     from backtrader_ib_api.tools.stocks import SP100_HOLDINGS
 
     parser = argparse.ArgumentParser(description="""
-    Downloads data using the IB Trader Workstation API
+    Downloads historical trades and options bid/ask data for a list of tickers using the IB Trader Workstation API
     """)
 
     parser.add_argument("-v", "--verbose", action="store_true")
