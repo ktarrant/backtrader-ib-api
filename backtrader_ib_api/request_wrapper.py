@@ -125,7 +125,11 @@ class RequestWrapper(EWrapper):
         HISTORICAL_HV_EQUITY=historical_data_row_function,
     )
 
-    def __init__(self, timeout=10.0):
+    def __init__(self, timeout: int = None):
+        """
+        Create an EWrapper to provide blocking access to the callback-based IB API.
+        :param timeout: Amount of time in seconds to wait for a response before giving up. Use None to never give up.
+        """
         EWrapper.__init__(self)
         self.response_queue = Queue()
         self.timeout = timeout
@@ -135,7 +139,12 @@ class RequestWrapper(EWrapper):
         self.response_table = None
         self.thread = None
 
-    def start_app(self, host, port, client_id):
+    def start_app(self, host: str, port: int, client_id: int):
+        """ Start a connection ton IB TWS application in a background thread and confirm connection is successful.
+        :param host: Hostname to connect to, usually 127.0.0.1
+        :param port: Port to connect to, configurable and differs for live vs paper trading.
+        :param client_id: Client ID setting for the TWS API
+        """
         self._app = EClient(wrapper=self)
         self.current_request_id = 0
         self.current_request = "INIT"
@@ -147,20 +156,22 @@ class RequestWrapper(EWrapper):
         self.response_queue.get(timeout=self.timeout)
 
     def stop_app(self):
+        """ Disconnect from the IB TWS and wait for the background thread to end. """
         self._app.disconnect()
         self.thread.join()
 
     @property
     def app(self):
+        """ The currently running application representing the connection to the IB TWS """
         return self._app
 
-    def _start_request(self, request_name):
-        self.current_request_id += 1
-        self.current_request = request_name
-        self.response_queue = Queue()
-        self.response_table = pd.DataFrame(columns=self.REQUEST_FIELDS[request_name])
-
     def request_stock_details(self, ticker: str, exchange="SMART", currency="USD"):
+        """ Performs a search using the ticker and provides a table of results including
+        the general information about each match.
+        :param ticker: stock ticker to search
+        :param exchange: exchange to look on
+        :param currency: currency to report information in
+        """
         self._start_request("STOCK_DETAILS")
         contract = Contract()
         contract.secType = "STK"
@@ -168,18 +179,28 @@ class RequestWrapper(EWrapper):
         contract.exchange = exchange
         contract.currency = currency
         self._app.reqContractDetails(self.current_request_id, contract)
-        return self.response_queue.get()
+        return self.response_queue.get(timeout=self.timeout)
 
     def request_option_params(self, ticker: str, contract_id: int):
+        """ Request options expiration and strike information about the provided stock ticker and contract_id.
+        :param ticker: stock ticker with available options
+        :param contract_id: contract ID of the stock with available options, returned by request_stock_details
+        """
         self._start_request("OPTION_PARAMS")
         self._app.reqSecDefOptParams(self.current_request_id,
                                      ticker,
                                      "",  # Leave blank so it will return all exchange options
                                      "STK",
                                      contract_id)
-        return self.response_queue.get()
+        return self.response_queue.get(timeout=self.timeout)
 
     def request_option_chain(self, ticker: str, exchange: str, expiration: str, currency="USD"):
+        """ Request a list of all the options available for a given ticker and expiration.
+        :param ticker: stock ticker with available options
+        :param exchange: exchange of the options contracts
+        :param expiration: expiration of the options contracts, in YYYYMMDD format
+        :param currency: currency to report information in
+        """
         self._start_request("OPTION_DETAILS")
         contract = Contract()
         contract.secType = "OPT"
@@ -188,7 +209,77 @@ class RequestWrapper(EWrapper):
         contract.currency = currency
         contract.lastTradeDateOrContractMonth = expiration
         self._app.reqContractDetails(self.current_request_id, contract)
-        return self.response_queue.get()
+        return self.response_queue.get(timeout=self.timeout)
+
+    def request_stock_trades_history(self, ticker: str, exchange="SMART", currency="USD", **kwargs):
+        """ Request historical data for stock trades for the given ticker
+        :param ticker: stock ticker to search
+        :param exchange: exchange to look on
+        :param currency: currency to report information in
+        """
+        self._start_request("HISTORICAL_TRADES_EQUITY")
+        contract = Contract()
+        contract.secType = "STK"
+        contract.localSymbol = ticker
+        contract.exchange = exchange
+        contract.currency = currency
+        return self._request_historical(contract, **kwargs)
+
+    def request_option_trades_history(self, ticker: str, expiration: str, strike: float, right="C",
+                                      exchange="SMART", currency="USD", **kwargs):
+        """ Request historical data for option trades for the given options contract
+        :param ticker: stock ticker with available options
+        :param expiration: expiration of the options contract, in YYYYMMDD format
+        :param strike: strike price of the options contract
+        :param right: "C" for call options and "P" for put options
+        :param exchange: exchange of the options contract
+        :param currency: currency to report information in
+        """
+        self._start_request("HISTORICAL_TRADES_OPTIONS")
+        if right not in ["C", "P"]:
+            raise ValueError(f"Invalid right: {right}")
+        contract = Contract()
+        contract.secType = "OPT"
+        contract.symbol = ticker
+        contract.exchange = exchange
+        contract.currency = currency
+        contract.lastTradeDateOrContractMonth = expiration
+        contract.strike = strike
+        contract.right = right
+        return self._request_historical(contract, **kwargs)
+
+    def request_option_bidask_history(self, ticker: str, expiration: str, strike: float, right="C",
+                                      exchange="SMART", currency="USD", **kwargs):
+        """ Request historical data for option bid and ask for the given options contract
+        :param ticker: stock ticker with available options
+        :param expiration: expiration of the options contract, in YYYYMMDD format
+        :param strike: strike price of the options contract
+        :param right: "C" for call options and "P" for put options
+        :param exchange: exchange of the options contract
+        :param currency: currency to report information in
+        """
+        self._start_request("HISTORICAL_BID_ASK_OPTIONS")
+        if right not in ["C", "P"]:
+            raise ValueError(f"Invalid right: {right}")
+        contract = Contract()
+        contract.secType = "OPT"
+        contract.symbol = ticker
+        contract.exchange = exchange
+        contract.currency = currency
+        contract.lastTradeDateOrContractMonth = expiration
+        contract.strike = strike
+        contract.right = right
+        return self._request_historical(contract, data_type="BID_ASK", **kwargs)
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Internal helper methods
+    # ------------------------------------------------------------------------------------------------------------------
+
+    def _start_request(self, request_name):
+        self.current_request_id += 1
+        self.current_request = request_name
+        self.response_queue = Queue()
+        self.response_table = pd.DataFrame(columns=self.REQUEST_FIELDS[request_name])
 
     def _request_historical(self, contract: Contract,
                             data_type="TRADES", duration="5 d", bar_size="30 mins", after_hours=False):
@@ -211,64 +302,6 @@ class RequestWrapper(EWrapper):
                                     keepUpToDate=False,
                                     chartOptions=[])
         return self.response_queue.get()
-
-    def request_stock_trades_history(self, ticker: str, exchange="SMART", currency="USD", **kwargs):
-        self._start_request("HISTORICAL_TRADES_EQUITY")
-        contract = Contract()
-        contract.secType = "STK"
-        contract.localSymbol = ticker
-        contract.exchange = exchange
-        contract.currency = currency
-        return self._request_historical(contract, **kwargs)
-
-    def request_option_trades_history(self, ticker: str, expiration: str, strike: float, right="C",
-                                      exchange="SMART", currency="USD", **kwargs):
-        self._start_request("HISTORICAL_TRADES_OPTIONS")
-        if right not in ["C", "P"]:
-            raise ValueError(f"Invalid right: {right}")
-        contract = Contract()
-        contract.secType = "OPT"
-        contract.symbol = ticker
-        contract.exchange = exchange
-        contract.currency = currency
-        contract.lastTradeDateOrContractMonth = expiration
-        contract.strike = strike
-        contract.right = right
-        return self._request_historical(contract, **kwargs)
-
-    def request_option_bidask_history(self, ticker: str, expiration: str, strike: float, right="C",
-                                      exchange="SMART", currency="USD", **kwargs):
-        self._start_request("HISTORICAL_BID_ASK_OPTIONS")
-        if right not in ["C", "P"]:
-            raise ValueError(f"Invalid right: {right}")
-        contract = Contract()
-        contract.secType = "OPT"
-        contract.symbol = ticker
-        contract.exchange = exchange
-        contract.currency = currency
-        contract.lastTradeDateOrContractMonth = expiration
-        contract.strike = strike
-        contract.right = right
-        return self._request_historical(contract, data_type="BID_ASK", **kwargs)
-
-    def error(self, req_id: TickerId, error_code: int, error_string: str):
-        """This event is called when there is an error with the
-        communication or when TWS wants to send a message to the client."""
-        logger.error(f"{error_string} (req_id:{req_id}, error_code:{error_code})")
-
-        if 2000 <= error_code < 10000:  # non-fatal
-            pass
-        elif error_code == 10167:  # delayed market data instead
-            pass
-        else:
-            logger.error("Ending response since error code is fatal")
-            self.response_queue.put(self.response_table)
-
-    def connectAck(self):
-        super().connectAck()
-        logger.info("Connection successful.")
-        if self.current_request == "INIT":
-            self.response_queue.put(None)
 
     def _handle_callback(self, callback_name, request_id, *args):
         if request_id != self.current_request_id:
@@ -300,6 +333,29 @@ class RequestWrapper(EWrapper):
 
         # deliver the data table
         self.response_queue.put(self.response_table)
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Callbacks from the IB TWS
+    # ------------------------------------------------------------------------------------------------------------------
+
+    def error(self, req_id: TickerId, error_code: int, error_string: str):
+        """This event is called when there is an error with the
+        communication or when TWS wants to send a message to the client."""
+        logger.error(f"{error_string} (req_id:{req_id}, error_code:{error_code})")
+
+        if 2000 <= error_code < 10000:  # non-fatal
+            pass
+        elif error_code == 10167:  # delayed market data instead
+            pass
+        else:
+            logger.error("Ending response since error code is fatal")
+            self.response_queue.put(self.response_table)
+
+    def connectAck(self):
+        super().connectAck()
+        logger.info("Connection successful.")
+        if self.current_request == "INIT":
+            self.response_queue.put(None)
 
     def contractDetails(self, request_id: int, *args):
         super().contractDetails(request_id, *args)
