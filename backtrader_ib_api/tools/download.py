@@ -78,7 +78,9 @@ if __name__ == "__main__":
             # pystore should automatically drop any duplicates, updating the data with latest if there are any
             equity_trades_collection.append(ticker, history)
         except ValueError:
-            equity_trades_collection.write(ticker, history)
+            ticker_metadata = dict(stock_details.loc[stock_contract_id])
+            ticker_metadata["contract_id"] = int(stock_contract_id)
+            equity_trades_collection.write(ticker, history, metadata=ticker_metadata)
 
         option_params = wrapper.request_option_params(ticker, stock_contract_id)
         logger.info(f"Found {len(option_params)} option param results")
@@ -114,6 +116,10 @@ if __name__ == "__main__":
                 # pystore should automatically drop any duplicates, updating the data with latest if there are any
                 option_bidask_collection.append(item_name, history)
             except ValueError:
-                option_bidask_collection.write(item_name, history)
+                option_metadata = dict(option_chain.loc[contract_id])
+                option_metadata["stock_ticker"] = ticker
+                option_metadata["stock_contract_id"] = int(stock_contract_id)
+                option_metadata["option_contract_id"] = int(contract_id)
+                option_bidask_collection.write(item_name, history, metadata=option_metadata)
 
     wrapper.stop_app()
