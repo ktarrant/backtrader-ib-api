@@ -26,7 +26,7 @@ if __name__ == "__main__":
     import datetime
 
     from backtrader_ib_api.finviz import estimate_next_earnings_date
-    from backtrader_ib_api.tools.stocks import SP100_HOLDINGS
+    from backtrader_ib_api.tools.stocks import SP100_HOLDINGS, FAVES_HOLDINGS
 
     parser = argparse.ArgumentParser(description="""
     Downloads historical trades and options bid/ask data for a list of tickers using the IB Trader Workstation API
@@ -38,10 +38,15 @@ if __name__ == "__main__":
     parser.add_argument("--clientid", default=0, type=int)
     parser.add_argument("--storage-path", default='C:/stores', help="Path to store downloaded data")
     parser.add_argument("--tickers", default="aapl", help="Comma-separated, case-insensitive list of tickers")
+    parser.add_argument("--short", action="store_true", help="Add 'Short List' holdings to the tickers list")
+    parser.add_argument("--faves", action="store_true", help="Add 'Faves' holdings to the tickers list")
     parser.add_argument("--sp100", action="store_true", help="Add S&P 100 holdings to the tickers list")
     parser.add_argument("--exchange", default="SMART", help="Exchange for the ticker")
     parser.add_argument("--bar-size", default="30 mins", help="Bar size")
-    parser.add_argument("--history-length", default=5, help="Number of days to collect history data")
+    parser.add_argument("--duration", default="5d", help="Duration value to look back. Valid units are d, w, m, y")
+    parser.add_argument("--expiration", default=None, type=str,
+                        help="Expiration in YYYYMMDD format. If none is provided, "
+                             "the system computes front expiration after next earnings")
 
     args = parser.parse_args()
 
@@ -58,14 +63,17 @@ if __name__ == "__main__":
     wrapper.start_app(args.host, args.port, args.clientid)
 
     bar_size_str = args.bar_size.replace("mins", "m").replace(" ", "")
-    duration = f"{args.history_length} d"
+    duration = f"{args.duration[:-1]} {args.duration[-1]}"
 
     equity_trades_collection = store.collection(f"trades-{bar_size_str}")
     # option_trades_collection = store.collection(f"option-trades-{bar_size_str}")
     option_bidask_collection = store.collection(f"option-bidask-{bar_size_str}")
 
     tickers = set(ticker.upper() for ticker in args.tickers.split(","))
-    tickers = tickers.union(set(contract.ticker.upper() for contract in SP100_HOLDINGS))
+    if args.sp100:
+        tickers = tickers.union(set(contract.ticker.upper() for contract in SP100_HOLDINGS))
+    if args.faves:
+        tickers = tickers.union(set(contract.ticker.upper() for contract in FAVES_HOLDINGS))
 
     for ticker in tickers:
         stock_details = wrapper.request_stock_details(ticker)
@@ -88,15 +96,23 @@ if __name__ == "__main__":
         # try to auto-select SMART exchange
         preferred_contracts = option_params[option_params.exchange == args.exchange]
         option_contract = preferred_contracts.iloc[0]
-
-        # find expiration just after earnings
-        earnings_date = estimate_next_earnings_date(ticker)
         expiration_dates = [datetime.datetime.strptime(expiration, "%Y%m%d")
                             for expiration in option_contract.expirations]
-        earnings_expiration_date = min(expiration for expiration in expiration_dates if expiration > earnings_date)
-        logger.info(f"Closest Options Expiration for Earnings: {earnings_expiration_date}")
 
-        earnings_expiration = datetime.datetime.strftime(earnings_expiration_date, "%Y%m%d")
+        if args.expiration is None:
+            # find expiration just after earnings
+            earnings_date = estimate_next_earnings_date(ticker)
+            earnings_expiration_date = min(expiration for expiration in expiration_dates if expiration > earnings_date)
+            logger.info(f"Closest Options Expiration for Earnings: {earnings_expiration_date}")
+            earnings_expiration = datetime.datetime.strftime(earnings_expiration_date, "%Y%m%d")
+        else:
+            if args.expiration not in option_contract.expirations:
+                logger.error(f"Invalid expiration provided: {args.expiration}. "
+                             f"Valid expirations: {option_contract.expirations}")
+                continue
+            earnings_expiration = args.expiration
+            logger.info(f"Using provided Expiration: {earnings_expiration}")
+
         option_chain = wrapper.request_option_chain(ticker, option_contract.exchange, earnings_expiration)
         logger.info(f"Option chain for {ticker} {earnings_expiration} has {len(option_chain.index)} options")
         logger.debug(f"Option chain: {option_chain}")
