@@ -6,21 +6,6 @@ from backtrader_ib_api.request_wrapper import RequestWrapper
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REQUESTS = ["trades", "implied_vol", "historical_vol"]
-REQUEST_NAME_TO_ID = {
-    "trades": 1,
-    "implied_vol": 2,
-    "historical_vol": 3,
-}
-REQUEST_ID_TO_NAME = {value: key for key, value in REQUEST_NAME_TO_ID.items()}
-REQUEST_NAME_TO_VALUE = {
-    "trades": "TRADES",
-    "implied_vol": "OPTION_IMPLIED_VOLATILITY",
-    "historical_vol": "HISTORICAL_VOLATILITY",
-}
-REQUEST_VALUE_TO_NAME = {value: key for key, value in REQUEST_NAME_TO_VALUE.items()}
-
-
 if __name__ == "__main__":
     import argparse
     import datetime
