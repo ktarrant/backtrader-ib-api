@@ -50,8 +50,20 @@ if __name__ == "__main__":
     bar_size_str = args.bar_size.replace("mins", "m").replace(" ", "")
     duration = f"{args.duration[:-1]} {args.duration[-1]}"
 
+    today = datetime.datetime.today()
+    if args.expiration:
+        expiration_dt = datetime.datetime.strptime(args.expiration, "%Y%m%d")
+
+        if expiration_dt < today:
+            query_time_str = expiration_dt.strftime("%Y%m%d %H:%M:%S")
+        else:
+            query_time_str = today.strftime("%Y%m%d %H:%M:%S")
+    else:
+        query_time_str = today.strftime("%Y%m%d %H:%M:%S")
+
     equity_trades_collection = store.collection(f"trades-{bar_size_str}")
-    # option_trades_collection = store.collection(f"option-trades-{bar_size_str}")
+    equity_iv_collection = store.collection(f"impliedvol-{bar_size_str}")
+    equity_hv_collection = store.collection(f"historicalvol-{bar_size_str}")
     option_bidask_collection = store.collection(f"option-bidask-{bar_size_str}")
 
     tickers = set(ticker.upper() for ticker in args.tickers.split(","))
@@ -64,16 +76,35 @@ if __name__ == "__main__":
         stock_details = wrapper.request_stock_details(ticker)
         logger.info(f"Using first match found for ticker {ticker}:\n{stock_details}")
         stock_contract_id = stock_details.index[0]
+        ticker_metadata = dict(stock_details.loc[stock_contract_id])
+        ticker_metadata["contract_id"] = int(stock_contract_id)
 
-        history = wrapper.request_stock_trades_history(ticker, duration=duration, bar_size=args.bar_size)
-        logger.debug(f"Equity history: {history}")
+        history = wrapper.request_stock_trades_history(ticker, duration=duration, bar_size=args.bar_size,
+                                                       query_time=query_time_str)
+        logger.debug(f"Equity history request for {ticker} finished")
         try:
             # pystore should automatically drop any duplicates, updating the data with latest if there are any
             equity_trades_collection.append(ticker, history)
         except ValueError:
-            ticker_metadata = dict(stock_details.loc[stock_contract_id])
-            ticker_metadata["contract_id"] = int(stock_contract_id)
             equity_trades_collection.write(ticker, history, metadata=ticker_metadata)
+
+        iv_history = wrapper.request_stock_iv_history(ticker, duration=duration, bar_size=args.bar_size,
+                                                      query_time=query_time_str)
+        logger.debug(f"IV history request for {ticker} finished")
+        try:
+            # pystore should automatically drop any duplicates, updating the data with latest if there are any
+            equity_iv_collection.append(ticker, history)
+        except ValueError:
+            equity_iv_collection.write(ticker, history, metadata=ticker_metadata)
+
+        hv_history = wrapper.request_stock_iv_history(ticker, duration=duration, bar_size=args.bar_size,
+                                                      query_time=query_time_str)
+        logger.debug(f"HV history request for {ticker} finished")
+        try:
+            # pystore should automatically drop any duplicates, updating the data with latest if there are any
+            equity_hv_collection.append(ticker, history)
+        except ValueError:
+            equity_hv_collection.write(ticker, history, metadata=ticker_metadata)
 
         option_params = wrapper.request_option_params(ticker, stock_contract_id)
         logger.info(f"Found {len(option_params)} option param results")
@@ -110,7 +141,8 @@ if __name__ == "__main__":
                                                             strike,
                                                             right,
                                                             duration=duration,
-                                                            bar_size=args.bar_size)
+                                                            bar_size=args.bar_size,
+                                                            query_time=query_time_str)
             item_name = f"{ticker}-{earnings_expiration}-{strike}{right}"
             logger.debug(f"{item_name} history: {history}")
             try:

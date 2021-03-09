@@ -165,19 +165,19 @@ class RequestWrapper(EWrapper):
         """ The currently running application representing the connection to the IB TWS """
         return self._app
 
-    def request_stock_details(self, ticker: str, exchange="SMART", currency="USD"):
+    def request_stock_details(self, ticker: str, **kwargs):
         """ Performs a search using the ticker and provides a table of results including
         the general information about each match.
         :param ticker: stock ticker to search
-        :param exchange: exchange to look on
-        :param currency: currency to report information in
+
+        :Keyword Arguments:
+            * *exchange* (``str``) --
+              Exchange to look on, i.e. "SMART"
+            * *currency* (``str``) --
+              Currency to report information in, i.e. "USD"
         """
         self._start_request("STOCK_DETAILS")
-        contract = Contract()
-        contract.secType = "STK"
-        contract.localSymbol = ticker
-        contract.exchange = exchange
-        contract.currency = currency
+        contract = self._get_stock_contract(ticker, **kwargs)
         self._app.reqContractDetails(self.current_request_id, contract)
         return self.response_queue.get(timeout=self.timeout)
 
@@ -202,6 +202,7 @@ class RequestWrapper(EWrapper):
         :param currency: currency to report information in
         """
         self._start_request("OPTION_DETAILS")
+        # do not use _get_option_contract shortcut because we are leaving right and strike blank
         contract = Contract()
         contract.secType = "OPT"
         contract.symbol = ticker
@@ -211,86 +212,163 @@ class RequestWrapper(EWrapper):
         self._app.reqContractDetails(self.current_request_id, contract)
         return self.response_queue.get(timeout=self.timeout)
 
-    def request_stock_trades_history(self, ticker: str, exchange="SMART", currency="USD", **kwargs):
+    def request_stock_trades_history(self, ticker: str, **kwargs):
         """ Request historical data for stock trades for the given ticker
         :param ticker: stock ticker to search
-        :param exchange: exchange to look on
-        :param currency: currency to report information in
+
+        :Keyword Arguments:
+            * *exchange* (``str``) --
+              Exchange to look on, i.e. "SMART"
+            * *currency* (``str``) --
+              Currency to report information in, i.e. "USD"
+            * *duration* (``str``) --
+              Amount of time to collect data for, i.e. "5 d" for five days of data.
+            * *bar_size* (''str'') --
+              Time interval that data is reported in, i.e. "30 mins" provides 30 minute bars
+            * *query_time* (''str'') --
+              End (latest, most recent) datetime of the returned historical data, in format "%Y%m%d %H:%M:%S"
+            * *after_hours* (''bool'') --
+              If True, data from outside normal market hours for this security are also returned.
         """
         self._start_request("HISTORICAL_TRADES_EQUITY")
-        contract = Contract()
-        contract.secType = "STK"
-        contract.localSymbol = ticker
-        contract.exchange = exchange
-        contract.currency = currency
-        return self._request_historical(contract, **kwargs)
+        contract = self._get_stock_contract(ticker, **kwargs)
+        return self._request_historical(contract, "TRADES", **kwargs)
 
-    def request_option_trades_history(self, ticker: str, expiration: str, strike: float, right="C",
-                                      exchange="SMART", currency="USD", **kwargs):
+    def request_stock_iv_history(self, ticker: str, **kwargs):
+        """ Request historical data for stock implied volatility for the given ticker
+        :param ticker: stock ticker to search
+
+        :Keyword Arguments:
+            * *exchange* (``str``) --
+              Exchange to look on, i.e. "SMART"
+            * *currency* (``str``) --
+              Currency to report information in, i.e. "USD"
+            * *duration* (``str``) --
+              Amount of time to collect data for, i.e. "5 d" for five days of data.
+            * *bar_size* (''str'') --
+              Time interval that data is reported in, i.e. "30 mins" provides 30 minute bars
+            * *query_time* (''str'') --
+              End (latest, most recent) datetime of the returned historical data, in format "%Y%m%d %H:%M:%S"
+            * *after_hours* (''bool'') --
+              If True, data from outside normal market hours for this security are also returned.
+        """
+        self._start_request("HISTORICAL_IV_EQUITY")
+        contract = self._get_stock_contract(ticker, **kwargs)
+        return self._request_historical(contract, "OPTION_IMPLIED_VOLATILITY", **kwargs)
+
+    def request_stock_hv_history(self, ticker: str, **kwargs):
+        """ Request historical data for stock historical volatility for the given ticker
+        :param ticker: stock ticker to search
+
+        :Keyword Arguments:
+            * *exchange* (``str``) --
+              Exchange to look on, i.e. "SMART"
+            * *currency* (``str``) --
+              Currency to report information in, i.e. "USD"
+            * *duration* (``str``) --
+              Amount of time to collect data for, i.e. "5 d" for five days of data.
+            * *bar_size* (''str'') --
+              Time interval that data is reported in, i.e. "30 mins" provides 30 minute bars
+            * *query_time* (''str'') --
+              End (latest, most recent) datetime of the returned historical data, in format "%Y%m%d %H:%M:%S"
+            * *after_hours* (''bool'') --
+              If True, data from outside normal market hours for this security are also returned.
+        """
+        self._start_request("HISTORICAL_HV_EQUITY")
+        contract = self._get_stock_contract(ticker, **kwargs)
+        return self._request_historical(contract, "HISTORICAL_VOLATILITY", **kwargs)
+
+    def request_option_trades_history(self, ticker: str, expiration: str, strike: float, right: str, **kwargs):
         """ Request historical data for option trades for the given options contract
         :param ticker: stock ticker with available options
-        :param expiration: expiration of the options contract, in YYYYMMDD format
+        :param expiration: expiration of the options contract, in "%Y%m%d" format
         :param strike: strike price of the options contract
         :param right: "C" for call options and "P" for put options
-        :param exchange: exchange of the options contract
-        :param currency: currency to report information in
+
+        :Keyword Arguments:
+            * *exchange* (``str``) --
+              Exchange to look on, i.e. "SMART"
+            * *currency* (``str``) --
+              Currency to report information in, i.e. "USD"
+            * *duration* (``str``) --
+              Amount of time to collect data for, i.e. "5 d" for five days of data.
+            * *bar_size* (''str'') --
+              Time interval that data is reported in, i.e. "30 mins" provides 30 minute bars
+            * *query_time* (''str'') --
+              End (latest, most recent) datetime of the returned historical data, in format "%Y%m%d %H:%M:%S"
+            * *after_hours* (''bool'') --
+              If True, data from outside normal market hours for this security are also returned.
         """
         self._start_request("HISTORICAL_TRADES_OPTIONS")
-        if right not in ["C", "P"]:
-            raise ValueError(f"Invalid right: {right}")
-        contract = Contract()
-        contract.secType = "OPT"
-        contract.symbol = ticker
-        contract.exchange = exchange
-        contract.currency = currency
-        contract.lastTradeDateOrContractMonth = expiration
-        contract.strike = strike
-        contract.right = right
-        return self._request_historical(contract, **kwargs)
+        contract = self._get_option_contract(ticker, expiration, strike, right, **kwargs)
+        return self._request_historical(contract, "TRADES", **kwargs)
 
-    def request_option_bidask_history(self, ticker: str, expiration: str, strike: float, right="C",
-                                      exchange="SMART", currency="USD", **kwargs):
+    def request_option_bidask_history(self, ticker: str, expiration: str, strike: float, right: str, **kwargs):
         """ Request historical data for option bid and ask for the given options contract
         :param ticker: stock ticker with available options
-        :param expiration: expiration of the options contract, in YYYYMMDD format
+        :param expiration: expiration of the options contract, in "%Y%m%d" format
         :param strike: strike price of the options contract
         :param right: "C" for call options and "P" for put options
-        :param exchange: exchange of the options contract
-        :param currency: currency to report information in
+
+        :Keyword Arguments:
+            * *exchange* (``str``) --
+              Exchange to look on, i.e. "SMART"
+            * *currency* (``str``) --
+              Currency to report information in, i.e. "USD"
+            * *duration* (``str``) --
+              Amount of time to collect data for, i.e. "5 d" for five days of data.
+            * *bar_size* (''str'') --
+              Time interval that data is reported in, i.e. "30 mins" provides 30 minute bars
+            * *query_time* (''str'') --
+              End (latest, most recent) datetime of the returned historical data, in format "%Y%m%d %H:%M:%S"
+            * *after_hours* (''bool'') --
+              If True, data from outside normal market hours for this security are also returned.
         """
         self._start_request("HISTORICAL_BID_ASK_OPTIONS")
-        if right not in ["C", "P"]:
-            raise ValueError(f"Invalid right: {right}")
-        contract = Contract()
-        contract.secType = "OPT"
-        contract.symbol = ticker
-        contract.exchange = exchange
-        contract.currency = currency
-        contract.lastTradeDateOrContractMonth = expiration
-        contract.strike = strike
-        contract.right = right
-        return self._request_historical(contract, data_type="BID_ASK", **kwargs)
+        contract = self._get_option_contract(ticker, expiration, strike, right, **kwargs)
+        return self._request_historical(contract, "BID_ASK", **kwargs)
 
     # ------------------------------------------------------------------------------------------------------------------
     # Internal helper methods
     # ------------------------------------------------------------------------------------------------------------------
-
     def _start_request(self, request_name):
         self.current_request_id += 1
         self.current_request = request_name
         self.response_queue = Queue()
         self.response_table = pd.DataFrame(columns=self.REQUEST_FIELDS[request_name])
 
-    def _request_historical(self, contract: Contract,
-                            data_type="TRADES", duration="5 d", bar_size="30 mins", after_hours=False):
+    @staticmethod
+    def _get_stock_contract(ticker: str, exchange="SMART", currency="USD", **_):
+        contract = Contract()
+        contract.secType = "STK"
+        contract.localSymbol = ticker
+        contract.exchange = exchange
+        contract.currency = currency
+        return contract
+
+    @staticmethod
+    def _get_option_contract(ticker: str, expiration: str, strike: float, right: str,
+                             exchange="SMART", currency="USD", **_):
+        if right not in ["C", "P"]:
+            raise ValueError(f"Invalid right: {right}")
+        contract = Contract()
+        contract.secType = "OPT"
+        contract.symbol = ticker
+        contract.exchange = exchange
+        contract.currency = currency
+        contract.lastTradeDateOrContractMonth = expiration
+        contract.strike = strike
+        contract.right = right
+        return contract
+
+    def _request_historical(self, contract: Contract, data_type: str, duration="5 d", bar_size="30 mins",
+                            query_time=datetime.today().strftime("%Y%m%d %H:%M:%S"), after_hours=False, **_):
         if data_type not in self.REQUEST_OPTIONS_HISTORICAL_TYPE:
             raise ValueError(f"Invalid data type '{data_type}'. Valid options: {self.REQUEST_OPTIONS_HISTORICAL_TYPE}")
 
         if bar_size not in self.REQUEST_OPTIONS_BAR_SIZE:
             raise ValueError(f"Invalid data type '{bar_size}'. Valid options: {self.REQUEST_OPTIONS_BAR_SIZE}")
 
-        end_time = datetime.today()
-        query_time = end_time.strftime("%Y%m%d %H:%M:%S")
         self._app.reqHistoricalData(reqId=self.current_request_id,
                                     contract=contract,
                                     endDateTime=query_time,
