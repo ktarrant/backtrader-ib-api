@@ -1,8 +1,7 @@
 import logging
 import pystore
-import pandas as pd
 
-from backtrader_ib_api.request_wrapper import RequestWrapper
+from backtrader_ib_api.wrapper.wrapper import RequestWrapper
 
 logger = logging.getLogger(__name__)
 

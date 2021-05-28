@@ -1,7 +1,6 @@
 import pytest
 
-from backtrader_ib_api.request_wrapper import RequestWrapper
-from ibapi.client import EClient
+from backtrader_ib_api.wrapper.wrapper import RequestWrapper
 
 
 def pytest_addoption(parser):

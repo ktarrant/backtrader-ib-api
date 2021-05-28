@@ -1,4 +1,4 @@
-from backtrader_ib_api.request_wrapper import RequestWrapper
+from backtrader_ib_api.wrapper.wrapper import RequestWrapper
 
 
 def test_stock_details(wrapper: RequestWrapper):
