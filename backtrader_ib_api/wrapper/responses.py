@@ -114,12 +114,12 @@ class HistoricalTradesResponse(Response):
     row_callback = "historicalData"
     end_callback = "historicalDataEnd"
     columns = ["datetime", "open", "high", "low", "close", "volume", "count", "average"]
-    renames = {"barCount": "count"}
+    renames = {"count": "barCount"}
 
     def parse_data(self, bar: BarData, *args) -> List:
         dt = datetime.strptime(bar.date, "%Y%m%d %H:%M:%S")
         values = [getattr(bar, self.renames.get(column, column))
-                  for column in self.columns]
+                  for column in self.columns if column != "datetime"]
         return [dt] + values
 
 
@@ -136,8 +136,8 @@ class HistoricalBidAskResponse(Response):
     end_callback = "historicalDataEnd"
     columns = ["average_bid", "max_ask", "min_bid", "average_ask"]
     renames = {
-        "open": "average_bid",
-        "high": "max_ask",
-        "low": "min_bid",
-        "close": "average_ask"
+        "average_bid": "open",
+        "max_ask": "high",
+        "min_bid": "low",
+        "average_ask": "close"
     }
